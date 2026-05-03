@@ -85,7 +85,7 @@ fn decode_jwt_payload(token: &str) -> Option<serde_json::Value> {
             c => standard.push(c),
         }
     }
-    while standard.len() % 4 != 0 {
+    while !standard.len().is_multiple_of(4) {
         standard.push('=');
     }
     let decoded = base64_decode(&standard)?;
@@ -181,7 +181,8 @@ pub fn discover() -> Vec<Account> {
 
             let active = if let Some(ref target) = active_target {
                 // ~/.codex symlink → compare resolved paths
-                target == &path || fs::canonicalize(&codex_home).ok() == fs::canonicalize(&path).ok()
+                target == &path
+                    || fs::canonicalize(&codex_home).ok() == fs::canonicalize(&path).ok()
             } else {
                 false
             };
@@ -248,7 +249,12 @@ pub fn switch_to(alias: &str) -> Result<Account, String> {
         let default_path = home_dir().join(".codex-default");
         if !default_path.exists() {
             fs::rename(&codex_home, &default_path).map_err(|e| {
-                format!("cannot rename {} to {}: {}", codex_home.display(), default_path.display(), e)
+                format!(
+                    "cannot rename {} to {}: {}",
+                    codex_home.display(),
+                    default_path.display(),
+                    e
+                )
             })?;
             // Update the default account's path
             if target.alias == "default" {
@@ -259,8 +265,7 @@ pub fn switch_to(alias: &str) -> Result<Account, String> {
 
     // Remove existing symlink or dir
     if codex_home.is_symlink() {
-        fs::remove_file(&codex_home)
-            .map_err(|e| format!("cannot remove symlink: {}", e))?;
+        fs::remove_file(&codex_home).map_err(|e| format!("cannot remove symlink: {}", e))?;
     }
 
     // Create symlink
@@ -286,8 +291,14 @@ pub fn import_account(name: &str, src: &Path) -> Result<Account, String> {
     }
 
     // Copy identity-defining files only (skip caches, logs, history)
-    copy_dir_filtered(src, &dest)
-        .map_err(|e| format!("failed to copy {} → {}: {}", src.display(), dest.display(), e))?;
+    copy_dir_filtered(src, &dest).map_err(|e| {
+        format!(
+            "failed to copy {} → {}: {}",
+            src.display(),
+            dest.display(),
+            e
+        )
+    })?;
 
     // Link sessions to shared pool if it exists, or copy source sessions
     let pool = home_dir().join(".codex-sessions");
@@ -323,11 +334,11 @@ pub fn sessions_pool_path() -> PathBuf {
 /// Returns (files_added, files_skipped, files_merged) counts.
 pub fn sync_sessions(extra_paths: &[PathBuf]) -> Result<(u64, u64, u64), String> {
     let pool = sessions_pool_path();
-    fs::create_dir_all(&pool)
-        .map_err(|e| format!("cannot create {}: {}", pool.display(), e))?;
+    fs::create_dir_all(&pool).map_err(|e| format!("cannot create {}: {}", pool.display(), e))?;
 
     let accounts = discover();
     let mut added: u64 = 0;
+    let mut skipped: u64 = 0;
     let mut merged: u64 = 0;
 
     // Collect session dirs to merge: each managed account plus extra paths
@@ -342,8 +353,8 @@ pub fn sync_sessions(extra_paths: &[PathBuf]) -> Result<(u64, u64, u64), String>
 
     for p in extra_paths {
         if p.is_dir() {
-            // Use the dir name as label
-            let label = p.file_name()
+            let label = p
+                .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "extra".into());
             sources.push((label, p.clone()));
@@ -352,11 +363,15 @@ pub fn sync_sessions(extra_paths: &[PathBuf]) -> Result<(u64, u64, u64), String>
 
     // Merge each source into the pool
     for (label, src) in &sources {
-        let (a, m) = merge_into_pool(src, &pool)?;
-        if a > 0 || m > 0 {
-            eprintln!("  {}: +{} files, ~{} merged (kept larger)", label, a, m);
+        let (a, s, m) = merge_into_pool(src, &pool)?;
+        if a > 0 || m > 0 || s > 0 {
+            eprintln!(
+                "  {}: +{} files, ~{} skipped, ~{} merged (kept larger)",
+                label, a, s, m
+            );
         }
         added += a;
+        skipped += s;
         merged += m;
     }
 
@@ -370,30 +385,35 @@ pub fn sync_sessions(extra_paths: &[PathBuf]) -> Result<(u64, u64, u64), String>
 
     // Also symlink extra paths if they're top-level codex dirs (not deeply nested)
     for p in extra_paths {
-        if p.is_dir() && !p.is_symlink() {
-            // Only if it looks like a codex home (has auth.json)
-            if p.join("auth.json").exists() {
-                replace_with_symlink(p, &pool);
-            }
+        if p.is_dir() && !p.is_symlink() && p.join("auth.json").exists() {
+            replace_with_symlink(p, &pool);
         }
     }
 
     eprintln!("  {} account(s) symlinked → {}", symlinked, pool.display());
-    Ok((added, merged - merged, merged))
+    Ok((added, skipped, merged))
 }
 
 /// Copy all files from `src` into `pool` preserving relative paths.
 /// If a file already exists in the pool, keep the larger one.
-/// Returns (files_added, files_merged).
-fn merge_into_pool(src: &Path, pool: &Path) -> Result<(u64, u64), String> {
+/// Returns (files_added, files_skipped, files_merged).
+fn merge_into_pool(src: &Path, pool: &Path) -> Result<(u64, u64, u64), String> {
     let mut added: u64 = 0;
+    let mut skipped: u64 = 0;
     let mut merged: u64 = 0;
-    merge_dir(src, src, pool, &mut added, &mut merged)
+    merge_dir(src, src, pool, &mut added, &mut skipped, &mut merged)
         .map_err(|e| format!("merge failed: {}", e))?;
-    Ok((added, merged))
+    Ok((added, skipped, merged))
 }
 
-fn merge_dir(base: &Path, current: &Path, pool: &Path, added: &mut u64, merged: &mut u64) -> io::Result<()> {
+fn merge_dir(
+    base: &Path,
+    current: &Path,
+    pool: &Path,
+    added: &mut u64,
+    skipped: &mut u64,
+    merged: &mut u64,
+) -> io::Result<()> {
     for entry in fs::read_dir(current)? {
         let entry = entry?;
         let src_path = entry.path();
@@ -402,7 +422,7 @@ fn merge_dir(base: &Path, current: &Path, pool: &Path, added: &mut u64, merged: 
 
         if src_path.is_dir() {
             fs::create_dir_all(&dest_path)?;
-            merge_dir(base, &src_path, pool, added, merged)?;
+            merge_dir(base, &src_path, pool, added, skipped, merged)?;
         } else {
             let src_size = src_path.metadata()?.len();
             if dest_path.exists() {
@@ -410,8 +430,9 @@ fn merge_dir(base: &Path, current: &Path, pool: &Path, added: &mut u64, merged: 
                 if src_size > dest_size {
                     fs::copy(&src_path, &dest_path)?;
                     *merged += 1;
+                } else {
+                    *skipped += 1;
                 }
-                // else: pool already has larger or equal, skip
             } else {
                 if let Some(parent) = dest_path.parent() {
                     fs::create_dir_all(parent)?;

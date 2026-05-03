@@ -64,7 +64,10 @@ fn cmd_list() {
     for acc in &accounts {
         let marker = if acc.active { "\u{2192}" } else { " " };
         let id_short = &acc.account_id[..acc.account_id.len().min(8)];
-        println!("{} {:<16} {:<30} {}", marker, acc.alias, acc.email, id_short);
+        println!(
+            "{} {:<16} {:<30} {}",
+            marker, acc.alias, acc.email, id_short
+        );
     }
 }
 
@@ -78,8 +81,11 @@ fn cmd_current() {
 fn cmd_sync(extra: &[PathBuf]) {
     println!("Merging sessions into shared pool...");
     match account::sync_sessions(extra) {
-        Ok((added, _skipped, merged)) => {
-            println!("Done: {} session files added, {} merged (kept larger).", added, merged);
+        Ok((added, skipped, merged)) => {
+            println!(
+                "Done: {} added, {} skipped, {} merged (kept larger).",
+                added, skipped, merged
+            );
         }
         Err(e) => {
             eprintln!("Error: {}", e);

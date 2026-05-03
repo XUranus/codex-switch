@@ -23,13 +23,14 @@ This approach has several properties:
 ## Architecture overview
 
 ```
-main.rs              CLI dispatch (list, current, use, import)
+main.rs              CLI dispatch (list, current, use, import, sync)
   │
   └─ account.rs      All core logic
        ├─ discover()           Scan filesystem for accounts
        ├─ current()            Find which account is active
        ├─ switch_to()          Repoint the ~/.codex symlink
        ├─ import_account()     Copy an external CODEX_HOME into ~/.codex-<name>
+       ├─ sync_sessions()      Merge sessions → shared pool, symlink accounts
        ├─ read_email_and_id()  Parse auth.json → email + account_id
        ├─ decode_jwt_payload() Base64url-decode a JWT to extract claims
        └─ copy_dir_filtered()  Copy only identity files, skip caches
@@ -84,21 +85,40 @@ auth.json, config.toml, version.json, installation_id,
 
 Caches, SQLite databases, history files, and generated images are skipped — Codex regenerates these on first run.
 
+### 4. Session sharing
+
+See [sessions-sharing.md](sessions-sharing.md).
+
+Codex stores conversation sessions as JSONL files under `<codex-home>/sessions/<YYYY>/<MM>/`. Without intervention, each account has its own sessions directory — switching accounts hides previous conversations.
+
+`sync_sessions()` solves this with a **shared sessions pool**:
+
+1. Creates `~/.codex-sessions/` as a single shared directory.
+2. Walks every known account's `sessions/` directory and copies files into the pool.
+3. For files with the **same relative path** (same session ID): compares sizes, keeps the **larger** file. A `+merged` counter tracks how many files were replaced with larger versions; a `+skipped` counter tracks how many were already larger or equal in the pool.
+4. Replaces each account's `sessions/` directory with a **symlink → `~/.codex-sessions/`**.
+
+Afterward, any account writes its sessions through the symlink into the shared pool, and reads see the unified history. Extra paths can be passed to `sync` to merge sessions from directories outside the managed set.
+
 ## Filesystem layout after first use
 
 ```
 $HOME/
   .codex            → symlink → .codex-personal   (resolved by codex at runtime)
+  .codex-sessions/                                 (shared sessions pool)
+    2026/05/02/rollout-....jsonl
+    2026/05/01/rollout-....jsonl
+    ...
   .codex-default/                                  (original account, preserved)
     auth.json
     config.toml
     cache/
-    state_5.sqlite
-    history.jsonl
+    sessions  → symlink → ../.codex-sessions
     ...
   .codex-personal/                                 (imported or previously active)
     auth.json
     config.toml
+    sessions  → symlink → ../.codex-sessions
     ...
 ```
 

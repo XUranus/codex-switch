@@ -59,7 +59,7 @@ if codex_home.is_symlink() {
 If `~/.codex` doesn't exist at all, the symlink is created directly:
 
 ```rust
-unix_fs::symlink(&target.path, &codex_home)?;
+create_dir_symlink(&target.path, &codex_home)?;
 ```
 
 This could happen on a system that has never run `codex`, or if the symlink was manually deleted.
