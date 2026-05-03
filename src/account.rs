@@ -352,12 +352,13 @@ pub fn sync_sessions(extra_paths: &[PathBuf]) -> Result<(u64, u64, u64), String>
     }
 
     for p in extra_paths {
-        if p.is_dir() {
-            let label = p
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "extra".into());
-            sources.push((label, p.clone()));
+        let resolved = resolve_source_dir(p, &pool);
+        match resolved {
+            Some((label, src)) => sources.push((label, src)),
+            None => eprintln!(
+                "  (skipping {}: already linked or no sessions)",
+                p.display()
+            ),
         }
     }
 
@@ -406,6 +407,52 @@ fn merge_into_pool(src: &Path, pool: &Path) -> Result<(u64, u64, u64), String> {
     Ok((added, skipped, merged))
 }
 
+/// Given a user-supplied path, figure out what to merge.
+/// - If it looks like a sessions dir (no auth.json nearby) → use as-is
+/// - If it looks like a codex home (has auth.json) → use its `sessions/` subdir
+/// - If the sessions dir is a symlink to our pool → skip (already linked)
+/// - If the resolved path is inside the pool → skip (would merge pool into itself)
+fn resolve_source_dir(path: &Path, pool: &Path) -> Option<(String, PathBuf)> {
+    if !path.is_dir() {
+        return None;
+    }
+
+    let label = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "extra".into());
+
+    // If this looks like a codex home (has auth.json), use its sessions/ subdir
+    let sessions_dir = if path.join("auth.json").exists() {
+        path.join("sessions")
+    } else {
+        path.to_path_buf()
+    };
+
+    // Skip if sessions/ is already a symlink to our pool
+    if sessions_dir.is_symlink() {
+        if let Ok(target) = fs::read_link(&sessions_dir) {
+            if target == pool {
+                return None;
+            }
+        }
+    }
+
+    // Skip if the sessions dir is inside the pool (would self-merge)
+    let canonical_pool = fs::canonicalize(pool).ok()?;
+    if let Ok(canonical_src) = fs::canonicalize(&sessions_dir) {
+        if canonical_src.starts_with(&canonical_pool) {
+            return None;
+        }
+    }
+
+    if sessions_dir.is_dir() {
+        Some((label, sessions_dir))
+    } else {
+        None
+    }
+}
+
 fn merge_dir(
     base: &Path,
     current: &Path,
@@ -417,6 +464,12 @@ fn merge_dir(
     for entry in fs::read_dir(current)? {
         let entry = entry?;
         let src_path = entry.path();
+
+        // Skip symlinks — session trees contain only regular files and real dirs
+        if src_path.is_symlink() {
+            continue;
+        }
+
         let rel = src_path.strip_prefix(base).unwrap();
         let dest_path = pool.join(rel);
 
