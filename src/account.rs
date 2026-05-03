@@ -172,6 +172,10 @@ pub fn discover() -> Vec<Account> {
             if !name_str.starts_with(".codex-") {
                 continue;
             }
+            // Skip the shared sessions pool
+            if name_str == ".codex-sessions" {
+                continue;
+            }
             if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                 continue;
             }
