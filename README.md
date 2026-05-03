@@ -16,6 +16,107 @@ cargo install --path .
 
 This places `codex-switch` in `~/.cargo/bin/` — make sure that's on your `PATH`.
 
+## Guide: logging into multiple accounts
+
+Codex CLI only stores one login at a time under `~/.codex`. To set up a second account, temporarily redirect `CODEX_HOME` while logging in:
+
+### Step 1: Log into your first account (already done)
+
+If you already use Codex, your first account is at `~/.codex`. This is your "default" account — codex-switch will preserve it.
+
+```
+$ codex login          # normal login, stores tokens in ~/.codex/auth.json
+```
+
+### Step 2: Log into a second account
+
+Pick a directory for the new account and log in with `CODEX_HOME` pointing there:
+
+```bash
+CODEX_HOME=~/.codex-second codex login
+```
+
+This runs the standard Codex login flow — open the URL in a browser, authenticate — but stores the tokens in `~/.codex-second/` instead of `~/.codex`. Your first account's tokens remain untouched.
+
+Repeat this step for each additional account. Choose descriptive directory names like `~/.codex-work`, `~/.codex-client-a`, etc.
+
+### Step 3: Import into codex-switch
+
+```bash
+codex-switch import second ~/.codex-second
+```
+
+Now `~/.codex-second` is copied to `~/.codex-second` (import copies only identity files — auth tokens, config, rules, skills). The original directory can be deleted:
+
+```bash
+rm -rf ~/.codex-second    # optional, the imported copy is now managed
+```
+
+Repeat for each account:
+
+```bash
+codex-switch import work ~/.codex-work
+codex-switch import client-a ~/.codex-client-a
+```
+
+### Step 4: List accounts
+
+```bash
+$ codex-switch list
+→ default          alice@personal.com              9cf65c60
+  second           bob@work.com                    b061a30a
+  work             carol@example.com               c172b41b
+```
+
+The arrow shows which account is currently active (the one `codex` will use).
+
+### Step 5: Switch between accounts
+
+```bash
+$ codex-switch use second
+Switched to second (bob@work.com)
+
+$ codex whoami      # now runs as bob@work.com
+```
+
+Switch back anytime:
+
+```bash
+$ codex-switch use default
+Switched to default (alice@personal.com)
+```
+
+### Step 6: Share sessions across accounts
+
+After switching a few times, you'll notice sessions from one account aren't visible from another. Run `sync` once to merge all sessions into a shared pool:
+
+```bash
+$ codex-switch sync
+Merging sessions into shared pool...
+  default: +23 files, ~0 skipped, ~0 merged (kept larger)
+  second: +5 files, ~0 skipped, ~0 merged (kept larger)
+  2 account(s) symlinked → /home/you/.codex-sessions
+Done: 28 added, 0 skipped, 0 merged (kept larger).
+```
+
+After this, all accounts see each other's conversations. Each account's `sessions/` directory is now a symlink to `~/.codex-sessions/` — new sessions from any account land in the shared pool automatically.
+
+### Workflow summary
+
+```bash
+# One-time setup per new account
+CODEX_HOME=~/.codex-<name> codex login
+codex-switch import <name> ~/.codex-<name>
+
+# One-time sessions merge
+codex-switch sync
+
+# Day-to-day usage
+codex-switch list          # see all accounts
+codex-switch use <name>    # switch to another account
+codex-switch current       # confirm which account is active
+```
+
 ## Usage
 
 ```bash
