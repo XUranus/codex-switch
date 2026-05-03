@@ -30,36 +30,26 @@ $ codex login          # normal login, stores tokens in ~/.codex/auth.json
 
 ### Step 2: Log into a second account
 
-Pick a directory for the new account and log in with `CODEX_HOME` pointing there:
+Use `codex-switch login <name>` — a wrapper around `codex login` that stores tokens in `~/.codex-<name>`:
 
 ```bash
-CODEX_HOME=~/.codex-second codex login
+$ codex-switch login second
+Starting Codex login for 'second'...
+A browser window will open — authenticate with your other account.
+
+Logged in as bob@work.com (second) — use `codex-switch use second` to activate.
 ```
 
 This runs the standard Codex login flow — open the URL in a browser, authenticate — but stores the tokens in `~/.codex-second/` instead of `~/.codex`. Your first account's tokens remain untouched.
 
-Repeat this step for each additional account. Choose descriptive directory names like `~/.codex-work`, `~/.codex-client-a`, etc.
-
-### Step 3: Import into codex-switch
+Repeat for each additional account:
 
 ```bash
-codex-switch import second ~/.codex-second
+codex-switch login work
+codex-switch login client-a
 ```
 
-Now `~/.codex-second` is copied to `~/.codex-second` (import copies only identity files — auth tokens, config, rules, skills). The original directory can be deleted:
-
-```bash
-rm -rf ~/.codex-second    # optional, the imported copy is now managed
-```
-
-Repeat for each account:
-
-```bash
-codex-switch import work ~/.codex-work
-codex-switch import client-a ~/.codex-client-a
-```
-
-### Step 4: List accounts
+### Step 3: List accounts
 
 ```bash
 $ codex-switch list
@@ -70,7 +60,7 @@ $ codex-switch list
 
 The arrow shows which account is currently active (the one `codex` will use).
 
-### Step 5: Switch between accounts
+### Step 4: Switch between accounts
 
 ```bash
 $ codex-switch use second
@@ -86,7 +76,7 @@ $ codex-switch use default
 Switched to default (alice@personal.com)
 ```
 
-### Step 6: Share sessions across accounts
+### Step 5: Share sessions across accounts
 
 After switching a few times, you'll notice sessions from one account aren't visible from another. Run `sync` once to merge all sessions into a shared pool:
 
@@ -105,8 +95,7 @@ After this, all accounts see each other's conversations. Each account's `session
 
 ```bash
 # One-time setup per new account
-CODEX_HOME=~/.codex-<name> codex login
-codex-switch import <name> ~/.codex-<name>
+codex-switch login <name>  # authenticate a new account
 
 # One-time sessions merge
 codex-switch sync
@@ -153,6 +142,18 @@ Switches the `~/.codex` symlink to point to `~/.codex-<name>`. On the very first
 ```
 $ codex-switch use personal
 Switched to personal (xuranus42@qq.com)
+```
+
+### `login <name>`
+
+Runs `codex login` with `CODEX_HOME` pointed at `~/.codex-<name>`. Creates the directory if needed and opens a browser for authentication. This is the simplest way to add a new account.
+
+```
+$ codex-switch login work
+Starting Codex login for 'work'...
+A browser window will open — authenticate with your other account.
+
+Logged in as work@example.com (work) — use `codex-switch use work` to activate.
 ```
 
 ### `import <name> <path>`

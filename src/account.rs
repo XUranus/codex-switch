@@ -2,6 +2,7 @@ use serde::Deserialize;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 const CODEX_DIR: &str = ".codex";
 
@@ -231,6 +232,55 @@ pub fn discover() -> Vec<Account> {
 /// Return the currently active account, if any.
 pub fn current() -> Option<Account> {
     discover().into_iter().find(|a| a.active)
+}
+
+/// Log into a new account by running `codex login` with CODEX_HOME pointed at
+/// `~/.codex-<name>`.  Creates the directory if it doesn't exist.
+/// Returns the new account on success.
+pub fn login_account(name: &str) -> Result<Account, String> {
+    if name.is_empty() || name.contains('/') || name.contains('\\') {
+        return Err("account name must not be empty or contain path separators".into());
+    }
+    if name == "sessions" {
+        return Err("'sessions' is reserved for the shared pool".into());
+    }
+
+    let dest = home_dir().join(format!(".codex-{}", name));
+    fs::create_dir_all(&dest).map_err(|e| format!("cannot create {}: {}", dest.display(), e))?;
+
+    eprintln!("Starting Codex login for '{}'...", name);
+    eprintln!("A browser window will open — authenticate with your other account.");
+    eprintln!();
+
+    let status = Command::new("codex")
+        .arg("login")
+        .env("CODEX_HOME", &dest)
+        .spawn()
+        .map_err(|e| format!("failed to run codex: {}. Is codex installed?", e))?
+        .wait()
+        .map_err(|e| format!("codex login error: {}", e))?;
+
+    if !status.success() {
+        return Err(format!("codex login exited with code {:?}", status.code()));
+    }
+
+    let auth_path = dest.join("auth.json");
+    if !auth_path.exists() {
+        return Err(format!(
+            "login appeared to succeed but no auth.json found in {}",
+            dest.display()
+        ));
+    }
+
+    let (email, account_id) = read_email_and_id(&auth_path);
+    eprintln!();
+    Ok(Account {
+        alias: name.to_string(),
+        email,
+        account_id,
+        path: dest,
+        active: false,
+    })
 }
 
 /// Switch to the account with the given alias by repointing the ~/.codex symlink.

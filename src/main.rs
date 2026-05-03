@@ -27,6 +27,13 @@ fn main() {
             }
             cmd_import(&args[2], &args[3]);
         }
+        "login" => {
+            if args.len() < 3 {
+                eprintln!("usage: codex-switch login <name>");
+                std::process::exit(1);
+            }
+            cmd_login(&args[2]);
+        }
         "sync" => {
             let extra: Vec<PathBuf> = args[2..].iter().map(PathBuf::from).collect();
             cmd_sync(&extra);
@@ -47,6 +54,7 @@ fn print_usage() {
 USAGE:
   codex-switch list               List all accounts
   codex-switch current            Show the active account
+  codex-switch login <name>       Log into a new account via codex login
   codex-switch use <name>         Switch to a specific account
   codex-switch import <name> <path>   Import an existing CODEX_HOME as an account
   codex-switch sync [paths...]    Merge sessions into shared pool"
@@ -85,6 +93,21 @@ fn cmd_sync(extra: &[PathBuf]) {
             println!(
                 "Done: {} added, {} skipped, {} merged (kept larger).",
                 added, skipped, merged
+            );
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn cmd_login(name: &str) {
+    match account::login_account(name) {
+        Ok(acc) => {
+            println!(
+                "Logged in as {} ({}) — use `codex-switch use {}` to activate.",
+                acc.email, acc.alias, acc.alias
             );
         }
         Err(e) => {
