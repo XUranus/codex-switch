@@ -23,6 +23,7 @@ codex-switch list                 # List all accounts
 codex-switch current              # Show the active account
 codex-switch use <name>           # Switch to a specific account
 codex-switch import <name> <path> # Import an existing CODEX_HOME directory
+codex-switch sync [paths...]     # Merge sessions into shared pool
 ```
 
 ## Commands
@@ -62,6 +63,23 @@ $ codex-switch import work ~/backups/.codex-work-v1
 Imported 'work' (work@example.com). Use `codex-switch use work` to activate.
 ```
 
+### `sync [paths...]`
+
+Merges session files from all accounts into a shared `~/.codex-sessions/` pool, then replaces each account's `sessions/` directory with a symlink to the pool. For sessions with the same filename (same session ID), the larger file is kept.
+
+Optional extra paths can be passed to merge sessions from directories outside the managed set.
+
+```
+$ codex-switch sync ~/old-codex-backup/sessions
+Merging sessions into shared pool...
+  default: +23 files, ~0 merged (kept larger)
+  personal: +0 files, ~1 merged (kept larger)
+  sessions: +2 files, ~0 merged (kept larger)
+Done: 25 session files added, 1 merged (kept larger).
+```
+
+After syncing, all accounts see the same sessions — switching accounts with `use` no longer hides your conversation history.
+
 ## How it works
 
 Each account lives in a directory named `~/.codex-<alias>`. `~/.codex` is a symlink pointing to whichever account is active. Codex reads `~/.codex` by default, so it always sees the active account's `auth.json`.
@@ -73,6 +91,8 @@ Each account lives in a directory named `~/.codex-<alias>`. `~/.codex` is a syml
 ```
 
 Switching accounts is `rm ~/.codex && ln -s ~/.codex-<target> ~/.codex`. `CODEX_HOME`, if set, overrides the symlink — so existing scripts still work.
+
+Sessions are stored in a shared `~/.codex-sessions/` pool. Each account's `sessions/` is a symlink to this pool, so all accounts see the same conversation history. `sync` performs the one-time migration from per-account sessions into the shared pool.
 
 See [docs/how-it-works.md](docs/how-it-works.md) for the full details.
 

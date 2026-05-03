@@ -289,6 +289,17 @@ pub fn import_account(name: &str, src: &Path) -> Result<Account, String> {
     copy_dir_filtered(src, &dest)
         .map_err(|e| format!("failed to copy {} → {}: {}", src.display(), dest.display(), e))?;
 
+    // Link sessions to shared pool if it exists, or copy source sessions
+    let pool = home_dir().join(".codex-sessions");
+    if pool.exists() {
+        replace_with_symlink(&dest, &pool);
+    } else if src.join("sessions").exists() {
+        // No pool yet — copy sessions from source to give the account its own
+        let src_sessions = src.join("sessions");
+        let dest_sessions = dest.join("sessions");
+        copy_dir_recursive(&src_sessions, &dest_sessions).ok();
+    }
+
     let (email, account_id) = read_email_and_id(&dest.join("auth.json"));
     Ok(Account {
         alias: name.to_string(),
@@ -297,6 +308,167 @@ pub fn import_account(name: &str, src: &Path) -> Result<Account, String> {
         path: dest,
         active: false,
     })
+}
+
+/// Sessions pool path shared by all accounts.
+pub fn sessions_pool_path() -> PathBuf {
+    home_dir().join(".codex-sessions")
+}
+
+/// Merge sessions from all known accounts (plus extra paths) into the shared
+/// `~/.codex-sessions/` pool, then replace each account's `sessions/` dir with
+/// a symlink to the pool.  For files with the same relative path, the larger
+/// one wins.
+///
+/// Returns (files_added, files_skipped, files_merged) counts.
+pub fn sync_sessions(extra_paths: &[PathBuf]) -> Result<(u64, u64, u64), String> {
+    let pool = sessions_pool_path();
+    fs::create_dir_all(&pool)
+        .map_err(|e| format!("cannot create {}: {}", pool.display(), e))?;
+
+    let accounts = discover();
+    let mut added: u64 = 0;
+    let mut merged: u64 = 0;
+
+    // Collect session dirs to merge: each managed account plus extra paths
+    let mut sources: Vec<(String, PathBuf)> = Vec::new();
+
+    for acc in &accounts {
+        let sessions = acc.path.join("sessions");
+        if sessions.is_dir() && !sessions.is_symlink() {
+            sources.push((acc.alias.clone(), sessions));
+        }
+    }
+
+    for p in extra_paths {
+        if p.is_dir() {
+            // Use the dir name as label
+            let label = p.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "extra".into());
+            sources.push((label, p.clone()));
+        }
+    }
+
+    // Merge each source into the pool
+    for (label, src) in &sources {
+        let (a, m) = merge_into_pool(src, &pool)?;
+        if a > 0 || m > 0 {
+            eprintln!("  {}: +{} files, ~{} merged (kept larger)", label, a, m);
+        }
+        added += a;
+        merged += m;
+    }
+
+    // Replace each account's sessions/ with symlink → pool
+    let mut symlinked = 0u64;
+    for acc in &accounts {
+        if replace_with_symlink(&acc.path, &pool) {
+            symlinked += 1;
+        }
+    }
+
+    // Also symlink extra paths if they're top-level codex dirs (not deeply nested)
+    for p in extra_paths {
+        if p.is_dir() && !p.is_symlink() {
+            // Only if it looks like a codex home (has auth.json)
+            if p.join("auth.json").exists() {
+                replace_with_symlink(p, &pool);
+            }
+        }
+    }
+
+    eprintln!("  {} account(s) symlinked → {}", symlinked, pool.display());
+    Ok((added, merged - merged, merged))
+}
+
+/// Copy all files from `src` into `pool` preserving relative paths.
+/// If a file already exists in the pool, keep the larger one.
+/// Returns (files_added, files_merged).
+fn merge_into_pool(src: &Path, pool: &Path) -> Result<(u64, u64), String> {
+    let mut added: u64 = 0;
+    let mut merged: u64 = 0;
+    merge_dir(src, src, pool, &mut added, &mut merged)
+        .map_err(|e| format!("merge failed: {}", e))?;
+    Ok((added, merged))
+}
+
+fn merge_dir(base: &Path, current: &Path, pool: &Path, added: &mut u64, merged: &mut u64) -> io::Result<()> {
+    for entry in fs::read_dir(current)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let rel = src_path.strip_prefix(base).unwrap();
+        let dest_path = pool.join(rel);
+
+        if src_path.is_dir() {
+            fs::create_dir_all(&dest_path)?;
+            merge_dir(base, &src_path, pool, added, merged)?;
+        } else {
+            let src_size = src_path.metadata()?.len();
+            if dest_path.exists() {
+                let dest_size = dest_path.metadata()?.len();
+                if src_size > dest_size {
+                    fs::copy(&src_path, &dest_path)?;
+                    *merged += 1;
+                }
+                // else: pool already has larger or equal, skip
+            } else {
+                if let Some(parent) = dest_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::copy(&src_path, &dest_path)?;
+                *added += 1;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Replace `<account>/sessions` with a symlink to `pool`.  If sessions is already
+/// a symlink pointing to the right place, do nothing.  If it's a real directory,
+/// contents have already been merged — just remove and symlink.
+/// Returns true if a change was made.
+fn replace_with_symlink(account_dir: &Path, pool: &Path) -> bool {
+    let sessions = account_dir.join("sessions");
+
+    // Already a symlink to our pool? Skip.
+    if sessions.is_symlink() {
+        if let Ok(target) = fs::read_link(&sessions) {
+            if target == pool {
+                return false;
+            }
+        }
+    }
+
+    // Remove existing dir or symlink
+    if sessions.is_symlink() {
+        let _ = fs::remove_file(&sessions);
+    } else if sessions.is_dir() {
+        let _ = fs::remove_dir_all(&sessions);
+    }
+
+    // Ensure parent exists
+    if !account_dir.exists() {
+        return false;
+    }
+
+    create_dir_symlink(pool, &sessions).is_ok()
+}
+
+/// Copy a directory recursively (full copy, not filtered).
+fn copy_dir_recursive(src: &Path, dest: &Path) -> io::Result<()> {
+    fs::create_dir_all(dest)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dest_path = dest.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dest_path)?;
+        } else {
+            fs::copy(&src_path, &dest_path)?;
+        }
+    }
+    Ok(())
 }
 
 /// Files/dirs to copy on import (identity & config, not heavy caches/logs).

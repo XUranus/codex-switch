@@ -27,6 +27,10 @@ fn main() {
             }
             cmd_import(&args[2], &args[3]);
         }
+        "sync" => {
+            let extra: Vec<PathBuf> = args[2..].iter().map(PathBuf::from).collect();
+            cmd_sync(&extra);
+        }
         "-h" | "--help" | "help" => print_usage(),
         _ => {
             eprintln!("unknown command: {}", args[1]);
@@ -44,7 +48,8 @@ USAGE:
   codex-switch list               List all accounts
   codex-switch current            Show the active account
   codex-switch use <name>         Switch to a specific account
-  codex-switch import <name> <path>   Import an existing CODEX_HOME as an account"
+  codex-switch import <name> <path>   Import an existing CODEX_HOME as an account
+  codex-switch sync [paths...]    Merge sessions into shared pool"
     );
 }
 
@@ -67,6 +72,19 @@ fn cmd_current() {
     match account::current() {
         Some(acc) => println!("{} ({})", acc.email, acc.alias),
         None => println!("No active account."),
+    }
+}
+
+fn cmd_sync(extra: &[PathBuf]) {
+    println!("Merging sessions into shared pool...");
+    match account::sync_sessions(extra) {
+        Ok((added, _skipped, merged)) => {
+            println!("Done: {} session files added, {} merged (kept larger).", added, merged);
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
     }
 }
 

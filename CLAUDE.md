@@ -16,8 +16,8 @@ cargo run -- <args>      # run with args
 
 ## Architecture
 
-- `src/main.rs` — CLI entrypoint: parses subcommands (`list`, `current`, `use`, `import`) and dispatches
-- `src/account.rs` — core logic: account discovery (scans `~/.codex-*` dirs), auth.json parsing (email extraction from JWT id_token via base64 decode), symlink management (switch creates/updates `~/.codex` symlink), filtered import (copies only identity files, skipping heavy caches/logs)
+- `src/main.rs` — CLI entrypoint: parses subcommands (`list`, `current`, `use`, `import`, `sync`) and dispatches
+- `src/account.rs` — core logic: account discovery (scans `~/.codex-*` dirs), auth.json parsing (email extraction from JWT id_token via base64 decode), symlink management (switch creates/updates `~/.codex` symlink), filtered import (copies only identity files, skipping heavy caches/logs), shared sessions pool (`~/.codex-sessions/`) with merge-dedup (keep larger file for same session ID)
 
 Dependencies: `serde` + `serde_json` for auth.json parsing. No other third-party crates.
 
@@ -28,3 +28,4 @@ Dependencies: `serde` + `serde_json` for auth.json parsing. No other third-party
 3. On first `use`, if `~/.codex` is a real directory, it gets renamed to `~/.codex-default`
 4. `import` copies only identity files (auth.json, config.toml, etc.), not caches or logs
 5. `CODEX_HOME` env var, if set, overrides everything (backward compatible)
+6. `sync` merges all account sessions into `~/.codex-sessions/`, then each account's `sessions/` becomes a symlink to the shared pool — switching accounts preserves conversation history
