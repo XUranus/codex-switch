@@ -1,6 +1,6 @@
 use serde::Deserialize;
 use std::fs;
-use std::os::unix::fs as unix_fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 const CODEX_DIR: &str = ".codex";
@@ -116,7 +116,36 @@ fn base64_decode(input: &str) -> Option<Vec<u8>> {
 }
 
 fn home_dir() -> PathBuf {
-    PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
+    // Unix: HOME
+    #[cfg(unix)]
+    {
+        if let Ok(h) = std::env::var("HOME") {
+            if !h.is_empty() {
+                return PathBuf::from(h);
+            }
+        }
+    }
+    // Windows: USERPROFILE
+    #[cfg(windows)]
+    {
+        if let Ok(h) = std::env::var("USERPROFILE") {
+            if !h.is_empty() {
+                return PathBuf::from(h);
+            }
+        }
+    }
+    PathBuf::from(".")
+}
+
+/// Create a directory symlink (platform-appropriate).
+#[cfg(unix)]
+fn create_dir_symlink(src: &Path, dst: &Path) -> io::Result<()> {
+    std::os::unix::fs::symlink(src, dst)
+}
+
+#[cfg(windows)]
+fn create_dir_symlink(src: &Path, dst: &Path) -> io::Result<()> {
+    std::os::windows::fs::symlink_dir(src, dst)
 }
 
 fn codex_home() -> PathBuf {
@@ -235,7 +264,7 @@ pub fn switch_to(alias: &str) -> Result<Account, String> {
     }
 
     // Create symlink
-    unix_fs::symlink(&target.path, &codex_home)
+    create_dir_symlink(&target.path, &codex_home)
         .map_err(|e| format!("cannot create symlink: {}", e))?;
 
     Ok(target)
